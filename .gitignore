@@ -1,0 +1,26 @@
+# Tools
+/venv/
+compile_commands.json
+/.luarc.json
+
+# IDEs
+.vs/
+.vscode/
+.idea/
+
+# Build/deps dir
+build/
+.deps/
+tmp/
+.clangd/
+.cache/clangd/
+.ccls-cache/
+.clang-tidy
+
+.DS_Store
+*.mo
+.*.sw?
+*~
+*.pyc
+*.o
+*.so

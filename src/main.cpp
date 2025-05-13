@@ -4,7 +4,6 @@
  * This program implements a single line of code count for C/C++ programs.
  * @author	Marcel Setubal Costa & Olive Oliveira Medeiros
  * @date	May, 12th 2025.
- * @remark On 2022-09-9 changed ...
  */
 #include <algorithm>
 #include <cctype>
@@ -38,6 +37,7 @@ enum lang_type_e : std::uint8_t {
 
 /// Integer type for counting lines.
 using count_t = unsigned long;
+
 /// Stores the file information we are collecting.
 class FileInfo {
 public:
@@ -58,11 +58,11 @@ public:
            count_t nd = 0,
            count_t ni = 0)
       : filename{ std::move(fn) }, type{ t }, n_blank{ nb }, n_comments{ nc }, n_loc{ nl },
-        n_doc{ nd }, n_lines{ ni } {
-    /* empty*/
-  }
+        n_doc{ nd }, n_lines{ ni } {}
 };
+
 using FileList = std::vector<FileInfo>;
+
 /// The running options provided via CLI.
 struct RunningOpt {
   std::vector<std::string> input_list;  //!< This might be a list of filenames or a directories.
@@ -71,6 +71,7 @@ struct RunningOpt {
   std::pair<bool, char> ordering_method;  // first = true if -s, false if -S;
 };
 
+/// Class to parse each line, store the current state and the results.
 class CodeParser {
 private:
   int blank_lines = 0;
@@ -127,22 +128,24 @@ public:
         continue;
       }
 
-      if (line.compare(i, 3, "///") == 0 || line.compare(i, 3, "//!") == 0) {
+      if (line.compare(i, 3, "///") == 0
+          || line.compare(i, 3, "//!") == 0) {  // doxyxgen documentation blocks
         doc_comment_lines++;
         return;
       }
-      if (line.compare(i, 2, "//") == 0) {
+      if (line.compare(i, 2, "//") == 0) {  // line of comment
         comment_lines++;
         return;
       }
-      if (line.compare(i, 3, "/**") == 0 || line.compare(i, 3, "/*!") == 0) {
+      if (line.compare(i, 3, "/**") == 0
+          || line.compare(i, 3, "/*!") == 0) {  // doxygen documentation blocks
         doc_comment_lines++;
         if (line.find("*/", i + 3) == std::string::npos) {
           in_doc_block_comment = true;
         }
         return;
       }
-      if (line.compare(i, 2, "/*") == 0) {
+      if (line.compare(i, 2, "/*") == 0) {  // line of comment
         comment_lines++;
         if (line.find("*/", i + 2) == std::string::npos) {
           in_block_comment = true;
@@ -153,7 +156,8 @@ public:
       i++;
     }
 
-    code_lines++;
+    code_lines++;  // If it isn't a comment, documentation or blank line, then it's a single line of
+                   // code.
   }
 
   int get_blank_lines() const { return blank_lines; }
@@ -163,8 +167,11 @@ public:
 };
 
 //== Aux functions
-/// Prints the help message and exits the program.
-/// If `message` is not empty, it is printed as an error before the help.
+/**
+ * @brief Prints the help message and exits the program.
+ * @brief If 'message' is not empty, it is printed as an error before the help.
+ * @param string message: the error message passed as an argument, or empty if help is called for.
+ */
 void usage(const std::string& message = "") {
   if (!message.empty()) {
     std::cerr << "[ERROR] " << message << "\n\n";
@@ -210,6 +217,12 @@ void usage(const std::string& message = "") {
   std::exit(message.empty() ? EXIT_SUCCESS : EXIT_FAILURE);
 }
 
+/**
+ * @brief Validates the running options passed by command line.
+ *
+ * @param argc, argv: command line options.
+ * @param run_options: struct with the options passed by command line.
+ */
 void validate_arguments(int argc, char* argv[], RunningOpt& run_options) {
   int c;
   int option_index{ 0 };
@@ -246,11 +259,25 @@ void validate_arguments(int argc, char* argv[], RunningOpt& run_options) {
     usage("Please, provide a source file or directory");
 }
 
+/**
+ * @brief Checks if a string ends with a specific suffix.
+ *
+ * @param str: The input string to check.
+ * @param suffix: The suffix to look for at the end of the string.
+ * @return true if the string ends with the specific suffix, false otherwise.
+ */
 bool ends_with(const std::string& str, const std::string& suffix) {
   return str.size() >= suffix.size()
          && str.compare(str.size() - suffix.size(), suffix.size(), suffix) == 0;
 }
 
+/**
+ * @brief Identifies the programming language based on a filename's extension.
+ *
+ * @param filename: The name of the file to be checked (with extension).
+ * @return An optional containing the corresponding language type enum, or std::nullopt if
+ * unrecognized.
+ */
 std::optional<lang_type_e> id_lang_type(const std::string& filename) {
   if (ends_with(filename, ".c"))
     return C;
@@ -263,6 +290,13 @@ std::optional<lang_type_e> id_lang_type(const std::string& filename) {
   return std::nullopt;
 }
 
+/**
+ * @brief Converts a language type enum to its corresponding string representation, to be printed
+ * later.
+ *
+ * @param type: The language type enum value
+ * @return a string representing the name of the language.
+ */
 std::string lang_type_to_string(lang_type_e type) {
   switch (type) {
   case C:
@@ -280,6 +314,12 @@ std::string lang_type_to_string(lang_type_e type) {
   }
 }
 
+/**
+ * @brief Converts a string to lowercase.
+ *
+ * @param str: The input string.
+ * @return a new string where all characters are converted to lowercase.
+ */
 std::string to_lower(const std::string& str) {
   std::string result = str;
   std::transform(
@@ -287,7 +327,17 @@ std::string to_lower(const std::string& str) {
   return result;
 }
 
-/// Retrieves a list of supported file names, based on the directory/file provided
+/**
+ * @brief Retrieves a list of supported source files from a given list of paths.
+ *
+ * This function traverses the provided list of paths. If a path is a directory,
+ * it will recursively or non-recursively collect file names depending on the
+ * recursive_search flag, collecting the supported files.
+ *
+ * @param src_list: A list of file or directory paths to search through.
+ * @param recursive_search: If true, searches directories recursively.
+ * @return a list of FileInfo objects representing the supported source files.
+ */
 FileList create_list_of_src_files(const std::vector<std::string>& src_list, bool recursive_search) {
   FileList file_list;
   // Traverse source list
@@ -321,23 +371,60 @@ FileList create_list_of_src_files(const std::vector<std::string>& src_list, bool
   return file_list;
 }
 
-// trim from left
+/**
+ * @brief Trims whitespace to the left of a string.
+ *
+ * @param s: The string to trim.
+ * @param t: A C-string containing characters to trim (whitespace characters).
+ * @return a new string, left-trimmed.
+ */
 inline std::string ltrim(const std::string& s, const char* t = " \t\n\r\f\v") {
   std::string clone{ s };
   clone.erase(0, clone.find_first_not_of(t));
   return clone;
 }
-// trim from right
+
+/**
+ * @brief Trims whitespace to the right of a string.
+ *
+ * @param s: The string to trim.
+ * @param t: A C-string containing characters to trim (whitespace characters).
+ * @return a new string, right-trimmed.
+ */
 inline std::string rtrim(const std::string& s, const char* t = " \t\n\r\f\v") {
   std::string clone{ s };
   clone.erase(clone.find_last_not_of(t) + 1);
   return clone;
 }
-// trim from left & right
+
+/**
+ * @brief Trims whitespace on both sides of a string
+ *
+ * @param s The string to trim.
+ * @param t A C-string containing characters to trim (whitespace characters).
+ * @return a new string, trimmed from both sides.
+ */
 inline std::string trim(const std::string& s, const char* t = " \t\n\r\f\v") {
   return rtrim(ltrim(s, t), t);
 }
 
+/**
+ * @brief Sorts a list of source files based on a specified criterion and order, passed by the user.
+ *
+ * The function supports sorting by:
+ * - 'f' : filename
+ * - 't' : language type
+ * - 'c' : number of comments
+ * - 'd' : number of documentation comments
+ * - 'b' : number of blank lines
+ * - 's' : number of lines of code
+ * - 'a' : total number of lines
+ *
+ * @param files: The list of files to sort.
+ * @param method A pair where:
+ *        - first: true for ascending, false for descending
+ *        - second: character representing the sorting criterion
+ */
 void sort_files(FileList& files, const std::pair<bool, char>& method) {
   auto [ascending, criteria] = method;
   auto comp = [&](const FileInfo& a, const FileInfo& b) -> bool {
@@ -363,8 +450,30 @@ void sort_files(FileList& files, const std::pair<bool, char>& method) {
   std::sort(files.begin(), files.end(), comp);
 }
 
+/**
+ * @brief Extracts the base name (filename only) from a full file path.
+ *
+ * This is important for the formatting of the output table to be presented.
+ *
+ * @param path: The full path to the file.
+ * @return the filename without directory components.
+ */
 std::string basename(const std::string& path) { return path.substr(path.find_last_of("/\\") + 1); }
 
+/**
+ * @brief Prints a formatted table with information about each file.
+ *
+ * Displays the following columns for each file:
+ * - Filename
+ * - Language
+ * - Number of comments (and percentage)
+ * - Number of documentation comments (and percentage)
+ * - Number of blank lines (and percentage)
+ * - Number of lines of code (and percentage)
+ * - Total number of lines
+ *
+ * @param files: The list of files to display.
+ */
 void print_table(const FileList& files) {
   std::cout << "Files processed: " << files.size() << '\n';
   std::cout << std::string(114, '-') << '\n';

@@ -71,6 +71,45 @@ struct RunningOpt {
   std::pair<bool, char> ordering_method;  // first = true if -s, false if -S;
 };
 
+/// Those are auxiliar functions, but we need to implement here because we need those available in
+/// the next class scope
+/**
+ * @brief Trims whitespace to the left of a string.
+ *
+ * @param s: The string to trim.
+ * @param t: A C-string containing characters to trim (whitespace characters).
+ * @return a new string, left-trimmed.
+ */
+inline std::string ltrim(const std::string& s, const char* t = " \t\n\r\f\v") {
+  std::string clone{ s };
+  clone.erase(0, clone.find_first_not_of(t));
+  return clone;
+}
+
+/**
+ * @brief Trims whitespace to the right of a string.
+ *
+ * @param s: The string to trim.
+ * @param t: A C-string containing characters to trim (whitespace characters).
+ * @return a new string, right-trimmed.
+ */
+inline std::string rtrim(const std::string& s, const char* t = " \t\n\r\f\v") {
+  std::string clone{ s };
+  clone.erase(clone.find_last_not_of(t) + 1);
+  return clone;
+}
+
+/**
+ * @brief Trims whitespace on both sides of a string
+ *
+ * @param s The string to trim.
+ * @param t A C-string containing characters to trim (whitespace characters).
+ * @return a new string, trimmed from both sides.
+ */
+inline std::string trim(const std::string& s, const char* t = " \t\n\r\f\v") {
+  return rtrim(ltrim(s, t), t);
+}
+
 /// Class to parse each line, store the current state and the results.
 class CodeParser {
 private:
@@ -84,80 +123,66 @@ private:
 
 public:
   void parse_line(const std::string& line) {
-    std::string trimmed = line;
-    trimmed.erase(std::remove(trimmed.begin(), trimmed.end(), ' '), trimmed.end());
+    std::string trimmed = trim(line);
     if (trimmed.empty()) {
       blank_lines++;
       return;
     }
 
-    size_t i = 0;
+    bool is_doc_line = false;
+    bool is_comment_line = false;
     bool inside_string = false;
     bool inside_char = false;
+    size_t i = 0;
 
-    while (i < line.length()) {
-      if (in_doc_block_comment) {
-        doc_comment_lines++;
-        if (line.find("*/", i) != std::string::npos) {
-          in_doc_block_comment = false;
-        }
-        return;
-      }
-      if (in_block_comment) {
-        comment_lines++;
-        if (line.find("*/", i) != std::string::npos) {
-          in_block_comment = false;
-        }
-        return;
-      }
-
-      if (!inside_string && line[i] == '\'') {
-        inside_char = !inside_char;
-        i++;
-        continue;
-      }
-
-      if (!inside_char && line[i] == '"') {
-        inside_string = !inside_string;
-        i++;
-        continue;
-      }
-
-      if (inside_string || inside_char) {
-        i++;
-        continue;
-      }
-
-      if (line.compare(i, 3, "///") == 0
-          || line.compare(i, 3, "//!") == 0) {  // doxyxgen documentation blocks
-        doc_comment_lines++;
-        return;
-      }
-      if (line.compare(i, 2, "//") == 0) {  // line of comment
-        comment_lines++;
-        return;
-      }
-      if (line.compare(i, 3, "/**") == 0
-          || line.compare(i, 3, "/*!") == 0) {  // doxygen documentation blocks
-        doc_comment_lines++;
-        if (line.find("*/", i + 3) == std::string::npos) {
-          in_doc_block_comment = true;
-        }
-        return;
-      }
-      if (line.compare(i, 2, "/*") == 0) {  // line of comment
-        comment_lines++;
-        if (line.find("*/", i + 2) == std::string::npos) {
-          in_block_comment = true;
-        }
-        return;
-      }
-
-      i++;
+    // Check for Doxygen single-line comments (/// or //!)
+    if (trimmed.compare(0, 3, "///") == 0 || trimmed.compare(0, 3, "//!") == 0) {
+      doc_comment_lines++;
+      return;
     }
 
-    code_lines++;  // If it isn't a comment, documentation or blank line, then it's a single line of
-                   // code.
+    // Check for Doxygen block starters (/** or /*!)
+    if (trimmed.compare(0, 3, "/**") == 0 || trimmed.compare(0, 3, "/*!") == 0) {
+      doc_comment_lines++;
+      in_doc_block_comment = true;
+      return;
+    }
+
+    // Handle in-progress Doxygen block
+    if (in_doc_block_comment) {
+      doc_comment_lines++;
+      if (trimmed.find("*/") != std::string::npos) {
+        in_doc_block_comment = false;
+      }
+      return;
+    }
+
+    // Regular comment handling (/* ... */ or //)
+    if (in_block_comment) {
+      comment_lines++;
+      if (trimmed.find("*/") != std::string::npos) {
+        in_block_comment = false;
+      }
+      return;
+    }
+
+    // Check for regular single-line comments (//)
+    if (trimmed.compare(0, 2, "//") == 0) {
+      comment_lines++;
+      return;
+    }
+
+    // Check for regular block comments (/*)
+    if (trimmed.compare(0, 2, "/*") == 0) {
+      comment_lines++;
+      if (trimmed.find("*/", 2) == std::string::npos) {
+        in_block_comment = true;
+      }
+      return;
+    }
+
+    // If none of the above, it's code
+    code_lines++;
   }
 
   int get_blank_lines() const { return blank_lines; }
@@ -372,43 +397,6 @@ FileList create_list_of_src_files(const std::vector<std::string>& src_list, bool
 }
 
 /**
- * @brief Trims whitespace to the left of a string.
- *
- * @param s: The string to trim.
- * @param t: A C-string containing characters to trim (whitespace characters).
- * @return a new string, left-trimmed.
- */
-inline std::string ltrim(const std::string& s, const char* t = " \t\n\r\f\v") {
-  std::string clone{ s };
-  clone.erase(0, clone.find_first_not_of(t));
-  return clone;
-}
-
-/**
- * @brief Trims whitespace to the right of a string.
- *
- * @param s: The string to trim.
- * @param t: A C-string containing characters to trim (whitespace characters).
- * @return a new string, right-trimmed.
- */
-inline std::string rtrim(const std::string& s, const char* t = " \t\n\r\f\v") {
-  std::string clone{ s };
-  clone.erase(clone.find_last_not_of(t) + 1);
-  return clone;
-}
-
-/**
- * @brief Trims whitespace on both sides of a string
- *
- * @param s The string to trim.
- * @param t A C-string containing characters to trim (whitespace characters).
- * @return a new string, trimmed from both sides.
- */
-inline std::string trim(const std::string& s, const char* t = " \t\n\r\f\v") {
-  return rtrim(ltrim(s, t), t);
-}
-
-/**
  * @brief Sorts a list of source files based on a specified criterion and order, passed by the user.
  *
  * The function supports sorting by:
@@ -540,9 +528,10 @@ int main(int argc, char* argv[]) {
     }
 
     file.n_blank = parser.get_blank_lines();
-    file.n_comments = parser.get_comment_lines() + parser.get_doc_comment_lines();
+    file.n_comments = parser.get_comment_lines();  // regular comments only
+    file.n_doc = parser.get_doc_comment_lines();   // documentation comments
     file.n_loc = parser.get_code_lines();
-    file.n_lines = file.n_blank + file.n_loc + file.n_comments;
+    file.n_lines = file.n_blank + file.n_loc + file.n_comments + file.n_doc;
   }
 
   if (run_options.should_order) {

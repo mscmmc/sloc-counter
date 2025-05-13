@@ -3,7 +3,7 @@
  * @description
  * This program implements a single line of code count for C/C++ programs.
  * @author	Marcel Setubal Costa & Olive Oliveira Medeiros
- * @date	September, 9th 2024.
+ * @date	May, 12th 2025.
  * @remark On 2022-09-9 changed ...
  */
 #include <algorithm>
@@ -14,6 +14,7 @@
 #include <cstring>
 #include <dirent.h>
 #include <filesystem>
+#include <fstream>
 #include <getopt.h>
 #include <iomanip>
 #include <iostream>
@@ -44,6 +45,7 @@ public:
   lang_type_e type;      //!< the language type.
   count_t n_blank;       //!< # of blank lines in the file.
   count_t n_comments;    //!< # of comment lines.
+  count_t n_doc;         //!< # of documentation lines
   count_t n_loc;         //!< # lines of code.
   count_t n_lines;       //!< # of lines.
 
@@ -53,9 +55,10 @@ public:
            count_t nb = 0,
            count_t nc = 0,
            count_t nl = 0,
+           count_t nd = 0,
            count_t ni = 0)
       : filename{ std::move(fn) }, type{ t }, n_blank{ nb }, n_comments{ nc }, n_loc{ nl },
-        n_lines{ ni } {
+        n_doc{ nd }, n_lines{ ni } {
     /* empty*/
   }
 };
@@ -66,6 +69,97 @@ struct RunningOpt {
   bool recursive{ false };
   bool should_order{ false };
   std::pair<bool, char> ordering_method;  // first = true if -s, false if -S;
+};
+
+class CodeParser {
+private:
+  int blank_lines = 0;
+  int code_lines = 0;
+  int comment_lines = 0;
+  int doc_comment_lines = 0;
+
+  bool in_block_comment = false;
+  bool in_doc_block_comment = false;
+
+public:
+  void parse_line(const std::string& line) {
+    std::string trimmed = line;
+    trimmed.erase(std::remove(trimmed.begin(), trimmed.end(), ' '), trimmed.end());
+    if (trimmed.empty()) {
+      blank_lines++;
+      return;
+    }
+
+    size_t i = 0;
+    bool inside_string = false;
+    bool inside_char = false;
+
+    while (i < line.length()) {
+      if (in_doc_block_comment) {
+        doc_comment_lines++;
+        if (line.find("*/", i) != std::string::npos) {
+          in_doc_block_comment = false;
+        }
+        return;
+      }
+      if (in_block_comment) {
+        comment_lines++;
+        if (line.find("*/", i) != std::string::npos) {
+          in_block_comment = false;
+        }
+        return;
+      }
+
+      if (!inside_string && line[i] == '\'') {
+        inside_char = !inside_char;
+        i++;
+        continue;
+      }
+
+      if (!inside_char && line[i] == '"') {
+        inside_string = !inside_string;
+        i++;
+        continue;
+      }
+
+      if (inside_string || inside_char) {
+        i++;
+        continue;
+      }
+
+      if (line.compare(i, 3, "///") == 0 || line.compare(i, 3, "//!") == 0) {
+        doc_comment_lines++;
+        return;
+      }
+      if (line.compare(i, 2, "//") == 0) {
+        comment_lines++;
+        return;
+      }
+      if (line.compare(i, 3, "/**") == 0 || line.compare(i, 3, "/*!") == 0) {
+        doc_comment_lines++;
+        if (line.find("*/", i + 3) == std::string::npos) {
+          in_doc_block_comment = true;
+        }
+        return;
+      }
+      if (line.compare(i, 2, "/*") == 0) {
+        comment_lines++;
+        if (line.find("*/", i + 2) == std::string::npos) {
+          in_block_comment = true;
+        }
+        return;
+      }
+
+      i++;
+    }
+
+    code_lines++;
+  }
+
+  int get_blank_lines() const { return blank_lines; }
+  int get_code_lines() const { return code_lines; }
+  int get_comment_lines() const { return comment_lines; }
+  int get_doc_comment_lines() const { return doc_comment_lines; }
 };
 
 //== Aux functions
@@ -107,11 +201,11 @@ void usage(const std::string& message = "") {
     << "  -s f|t|c|d|b|s|a\n"
     << "            Sort table in ASCENDING order by (f)ilename, (t) filetype,\n"
     << "            (c)omments, (d)oc comments, (b)lank lines, (s)loc, or (a)ll.\n"
-    << "            Default is to show files in ordem of appearance.\n\n"
+    << "            Default is to show files in order of appearance.\n\n"
     << "  -S f|t|c|d|b|s|a\n"
     << "            Sort table in DESCENDING order by (f)ilename, (t) filetype,\n"
     << "            (c)omments, (d)oc comments, (b)lank lines, (s)loc, or (a)ll.\n"
-    << "            Default is to show files in ordem of appearance.\n";
+    << "            Default is to show files in order of appearance.\n";
 
   std::exit(message.empty() ? EXIT_SUCCESS : EXIT_FAILURE);
 }
@@ -169,6 +263,23 @@ std::optional<lang_type_e> id_lang_type(const std::string& filename) {
   return std::nullopt;
 }
 
+std::string lang_type_to_string(lang_type_e type) {
+  switch (type) {
+  case C:
+    return "C";
+  case CPP:
+    return "C++";
+  case H:
+    return "C Header";
+  case HPP:
+    return "C++ Header";
+  case UNDEF:
+    return "Unknown";
+  default:
+    return "Invalid";
+  }
+}
+
 std::string to_lower(const std::string& str) {
   std::string result = str;
   std::transform(
@@ -221,134 +332,115 @@ inline std::string rtrim(const std::string& s, const char* t = " \t\n\r\f\v") {
   std::string clone{ s };
   clone.erase(clone.find_last_not_of(t) + 1);
   return clone;
-  return s;
 }
 // trim from left & right
 inline std::string trim(const std::string& s, const char* t = " \t\n\r\f\v") {
   return rtrim(ltrim(s, t), t);
 }
 
-struct CountFields {
-  int locs{ 0 };
-  int comments{ 0 };
-  int docblocks{ 0 };
-  int blanks{ 0 };
-};
-
-class CodeParser {
-private:
-  bool inside_comment{ false };
-  bool inside_docblock{ false };
-  bool inside_literal{ false };
-
-public:
-  CountFields parse_line(const std::string& line);
-};
-
-CountFields CodeParser::parse_line(const std::string& line) {
-  CountFields count_data;
-  std::string trimmed = trim(line);  // right trim + left trim
-  auto len = trimmed.size();
-
-  if (len == 0) {  // blank line
-    count_data.blanks = 1;
-    return count_data;
-  }
-
-  bool inside_comment_block = false;
-  bool inside_docblock = false;
-  bool inside_single_line_comment = false;
-  bool inside_literal = false;
-  bool inside_char = false;
-
-  for (size_t i = 0; i < len;) {
-    // grab 3 characters
-    if (i + 2 < len) {
-      std::string sub = trimmed.substr(i, 3);
-
-      if (sub == "/*") {
-        inside_comment_block = true;
-        count_data.comments = 1;
-        i += 3;
-        continue;
-      }
-
-      if (sub == "/**" || sub == "/*!") {
-        inside_docblock = true;
-        count_data.docblocks = 1;
-        i += 3;
-        continue;
-      }
-
-      if (sub == "///" || sub == "//!") {
-        inside_single_line_comment = true;
-        count_data.comments = 1;
-        break;  // because it's a single line comment
-      }
+void sort_files(FileList& files, const std::pair<bool, char>& method) {
+  auto [ascending, criteria] = method;
+  auto comp = [&](const FileInfo& a, const FileInfo& b) -> bool {
+    switch (criteria) {
+    case 'f':
+      return ascending ? a.filename < b.filename : a.filename > b.filename;
+    case 't':
+      return ascending ? a.type < b.type : a.type > b.type;
+    case 'c':
+      return ascending ? a.n_comments < b.n_comments : a.n_comments > b.n_comments;
+    case 'd':
+      return ascending ? a.n_doc < b.n_doc : a.n_doc > b.n_doc;
+    case 'b':
+      return ascending ? a.n_blank < b.n_blank : a.n_blank > b.n_blank;
+    case 's':
+      return ascending ? a.n_loc < b.n_loc : a.n_loc > b.n_loc;
+    case 'a':
+      return ascending ? a.n_lines < b.n_lines : a.n_lines > b.n_lines;
+    default:
+      return true;
     }
-
-    // grab 2 characters
-    if (i + 1 < len) {
-      std::string sub = trimmed.substr(i, 2);
-
-      if (sub == "//") {
-        inside_single_line_comment = true;
-        count_data.comments = 1;
-        break;
-      }
-    }
-
-    // grab 1 character
-    if (i < len) {
-      if (trimmed[i] == '"' && !inside_comment_block && !inside_char) {
-        inside_literal = !inside_literal;
-      } else if (trimmed[i] == '\'' && !inside_comment_block && !inside_literal) {
-        inside_char = !inside_char;
-      }
-
-      // are we inside a comment block?
-      if (inside_comment_block) {
-        if (i + 1 < len && trimmed[i] == '*' && trimmed[i + 1] == '/') {
-          inside_comment_block = false;  // close the comment block
-          i += 2;                        // getting out of block
-          continue;
-        }
-      }
-
-      // if it's none other state, then it's a code line
-      if (!inside_comment_block && !inside_docblock && !inside_literal && !inside_char
-          && !isspace(trimmed[i])) {
-        count_data.locs = 1;
-      }
-
-      i++;
-    }
-  }
-
-  if (inside_single_line_comment or inside_docblock) {
-    count_data.comments = 1;
-    count_data.locs = 0;  // no code in this line
-  }
-
-  return count_data;
+  };
+  std::sort(files.begin(), files.end(), comp);
 }
+
+std::string basename(const std::string& path) { return path.substr(path.find_last_of("/\\") + 1); }
+
+void print_table(const FileList& files) {
+  std::cout << "Files processed: " << files.size() << '\n';
+  std::cout << std::string(114, '-') << '\n';
+
+  std::cout << std::left << std::setw(20) << "Filename" << std::setw(12) << "Language"
+            << std::setw(15) << "Comments" << std::setw(17) << "Doc Comments" << std::setw(12)
+            << "Blank" << std::setw(12) << "Code" << std::setw(12) << "# of lines" << '\n';
+
+  std::cout << std::string(114, '-') << '\n';
+
+  for (const auto& f : files) {
+    int total = f.n_blank + f.n_comments + f.n_doc + f.n_loc;
+
+    auto percent = [&](int count) -> std::string {
+      if (total == 0)
+        return "0.0%";
+      std::ostringstream oss;
+      oss << std::fixed << std::setprecision(1) << (100.0 * count / total) << '%';
+      return oss.str();
+    };
+
+    std::ostringstream comments;
+    comments << f.n_comments << " (" << percent(f.n_comments) << ")";
+
+    std::ostringstream doc;
+    doc << f.n_doc << " (" << percent(f.n_doc) << ")";
+
+    std::ostringstream blank;
+    blank << f.n_blank << " (" << percent(f.n_blank) << ")";
+
+    std::ostringstream code;
+    code << f.n_loc << " (" << percent(f.n_loc) << ")";
+
+    std::cout << std::left << std::setw(20) << basename(f.filename) << std::setw(12)
+              << lang_type_to_string(f.type) << std::setw(15) << comments.str() << std::setw(17)
+              << doc.str() << std::setw(12) << blank.str() << std::setw(12) << code.str()
+              << std::setw(12) << total << '\n';
+  }
+
+  std::cout << std::string(114, '-') << '\n';
+}
+
 //== Main entry
 
 int main(int argc, char* argv[]) {
+  RunningOpt run_options;
+  validate_arguments(argc, argv, run_options);
 
-  std::vector<FileInfo> db;
+  // creates the file list for processing
+  FileList files = create_list_of_src_files(run_options.input_list, run_options.recursive);
 
-  FileInfo fc;
-  fc.filename = "test.cpp";
-  fc.type = CPP;
-  fc.n_comments = 4;
-  fc.n_blank = 5;
-  fc.n_loc = 15;
-  fc.n_lines = 20;
+  // parser
+  for (auto& file : files) {
+    std::ifstream in(file.filename);
+    if (!in.is_open()) {
+      usage("Could not open file");
+      continue;
+    }
 
-  db.push_back(fc);
+    CodeParser parser;
+    std::string line;
+    while (std::getline(in, line)) {
+      parser.parse_line(line);
+    }
 
-  db.emplace_back("test.cpp", CPP, 3, 10, 15, 18);
+    file.n_blank = parser.get_blank_lines();
+    file.n_comments = parser.get_comment_lines() + parser.get_doc_comment_lines();
+    file.n_loc = parser.get_code_lines();
+    file.n_lines = file.n_blank + file.n_loc + file.n_comments;
+  }
 
-  return EXIT_SUCCESS;
+  if (run_options.should_order) {
+    sort_files(files, run_options.ordering_method);
+  }
+
+  print_table(files);
+
+  return 0;
 }

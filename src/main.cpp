@@ -439,14 +439,26 @@ void sort_files(FileList& files, const std::pair<bool, char>& method) {
 }
 
 /**
- * @brief Extracts the base name (filename only) from a full file path.
+ * @brief Extracts the relative basename from a full file path.
  *
  * This is important for the formatting of the output table to be presented.
  *
- * @param path: The full path to the file.
- * @return the filename without directory components.
+ * @param full_path: The full path to the file.
+ * @param base_dir: The base directory.
+ * @return the new path.
  */
-std::string basename(const std::string& path) { return path.substr(path.find_last_of("/\\") + 1); }
+
+std::string relative_basename(const std::string &full_path, const std::string &base_dir) {
+    std::filesystem::path full(full_path);
+    std::filesystem::path base(base_dir);
+    std::error_code ec;
+    std::filesystem::path rel = std::filesystem::relative(full, base, ec);
+    if (!ec) {
+        return rel.string();
+    } else {
+        return full.string();
+    }
+}
 
 /**
  * @brief Prints a formatted table with information about each file.
@@ -462,20 +474,43 @@ std::string basename(const std::string& path) { return path.substr(path.find_las
  *
  * @param files: The list of files to display.
  */
-void print_table(const FileList& files) {
-  std::cout << "Files processed: " << files.size() << '\n';
-  std::cout << std::string(114, '-') << '\n';
+void print_table(const FileList& files, const std::string &base_dir) {
+  if (files.empty()) {
+    std::cout << "No files processed.\n";
+    return;
+  }
 
-  std::cout << std::left << std::setw(20) << "Filename" << std::setw(12) << "Language"
-            << std::setw(15) << "Comments" << std::setw(17) << "Doc Comments" << std::setw(12)
-            << "Blank" << std::setw(12) << "Code" << std::setw(12) << "# of lines" << '\n';
-
-  std::cout << std::string(114, '-') << '\n';
-
+  // Calculate maximum filename width using the relative path
+  size_t max_filename_width = 0;
   for (const auto& f : files) {
-    int total = f.n_blank + f.n_comments + f.n_doc + f.n_loc;
+    std::string relName = relative_basename(f.filename, base_dir);
+    max_filename_width = std::max(max_filename_width, relName.size());
+  }
+  max_filename_width = std::max(max_filename_width, static_cast<size_t>(8)); // "Filename" header
 
-    auto percent = [&](int count) -> std::string {
+  const size_t sum_fixed_widths = 12 + 15 + 17 + 12 + 12 + 12;
+  const size_t total_separator_width = max_filename_width + sum_fixed_widths;
+  
+  std::cout << "Files processed: " << files.size() << '\n';
+  std::cout << std::string(total_separator_width, '-') << '\n';
+  
+  // Print table header
+  std::cout << std::left
+            << std::setw(max_filename_width) << "Filename"
+            << std::setw(12) << "Language"
+            << std::setw(15) << "Comments"
+            << std::setw(17) << "Doc Comments"
+            << std::setw(12) << "Blank"
+            << std::setw(12) << "Code"
+            << std::setw(12) << "# of lines"
+            << '\n';
+
+  std::cout << std::string(total_separator_width, '-') << '\n';
+
+  // Print each file's data using the relative path
+  for (const auto& f : files) {
+    count_t total = f.n_blank + f.n_comments + f.n_doc + f.n_loc;
+    auto percent = [&](count_t count) -> std::string {
       if (total == 0)
         return "0.0%";
       std::ostringstream oss;
@@ -483,25 +518,51 @@ void print_table(const FileList& files) {
       return oss.str();
     };
 
-    std::ostringstream comments;
+    std::ostringstream comments, doc, blank, code;
     comments << f.n_comments << " (" << percent(f.n_comments) << ")";
-
-    std::ostringstream doc;
     doc << f.n_doc << " (" << percent(f.n_doc) << ")";
-
-    std::ostringstream blank;
     blank << f.n_blank << " (" << percent(f.n_blank) << ")";
-
-    std::ostringstream code;
     code << f.n_loc << " (" << percent(f.n_loc) << ")";
 
-    std::cout << std::left << std::setw(20) << basename(f.filename) << std::setw(12)
-              << lang_type_to_string(f.type) << std::setw(15) << comments.str() << std::setw(17)
-              << doc.str() << std::setw(12) << blank.str() << std::setw(12) << code.str()
-              << std::setw(12) << total << '\n';
-  }
+    std::cout << std::left
+              << std::setw(max_filename_width) << relative_basename(f.filename, base_dir)
+              << "  "
+              << std::setw(12) << lang_type_to_string(f.type)
+              << std::setw(15) << comments.str()
+              << std::setw(17) << doc.str()
+              << std::setw(12) << blank.str()
+              << std::setw(12) << code.str()
+              << std::setw(12) << total
+              << '\n';
 
-  std::cout << std::string(114, '-') << '\n';
+    std::cout << '\n';
+  }
+  
+  std::cout << std::string(total_separator_width, '-') << '\n';
+
+  // Print the SUM row when processing more than one file
+  if (files.size() > 1) {
+    count_t sum_comments = 0, sum_doc = 0, sum_blank = 0, sum_loc = 0, sum_lines = 0;
+    for (const auto& f : files) {
+      sum_comments += f.n_comments;
+      sum_doc += f.n_doc;
+      sum_blank += f.n_blank;
+      sum_loc += f.n_loc;
+      sum_lines += f.n_lines;
+    }
+
+    std::cout << std::left 
+              << std::setw(max_filename_width) << "SUM"
+              << std::setw(12) << ""
+              << std::setw(15) << sum_comments
+              << std::setw(17) << sum_doc
+              << std::setw(12) << sum_blank
+              << std::setw(12) << sum_loc
+              << std::setw(12) << sum_lines
+              << '\n';
+
+    std::cout << std::string(total_separator_width, '-') << '\n';
+  }
 }
 
 //== Main entry
@@ -510,17 +571,16 @@ int main(int argc, char* argv[]) {
   RunningOpt run_options;
   validate_arguments(argc, argv, run_options);
 
-  // creates the file list for processing
+  // Create the file list for processing
   FileList files = create_list_of_src_files(run_options.input_list, run_options.recursive);
 
-  // parser
+  // Parser
   for (auto& file : files) {
     std::ifstream in(file.filename);
     if (!in.is_open()) {
       usage("Could not open file");
       continue;
     }
-
     CodeParser parser;
     std::string line;
     while (std::getline(in, line)) {
@@ -528,17 +588,30 @@ int main(int argc, char* argv[]) {
     }
 
     file.n_blank = parser.get_blank_lines();
-    file.n_comments = parser.get_comment_lines();  // regular comments only
-    file.n_doc = parser.get_doc_comment_lines();   // documentation comments
+    file.n_comments = parser.get_comment_lines();
+    file.n_doc = parser.get_doc_comment_lines();
     file.n_loc = parser.get_code_lines();
-    file.n_lines = file.n_blank + file.n_loc + file.n_comments + file.n_doc;
+    file.n_lines = file.n_blank + file.n_comments + file.n_doc + file.n_loc;
   }
 
   if (run_options.should_order) {
     sort_files(files, run_options.ordering_method);
   }
 
-  print_table(files);
+  // Determine a base directory from the input list
+  std::string base_directory;
+  for (const auto &item : run_options.input_list) {
+    if (std::filesystem::is_directory(item)) {
+      base_directory = item;
+      break;
+    }
+  }
+  // If no directory was provided, use current directory
+  if (base_directory.empty()) {
+    base_directory = ".";
+  }
+
+  print_table(files, base_directory);
 
   return 0;
 }

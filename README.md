@@ -45,4 +45,4 @@ g++ -std=c++17 *.cpp -o sloc
 
 👥 Autoria
 
-    Este projeto foi desenvolvido por Marcel Setúbal Costa e Olive Oliveira Medeiros (veja author.md) durante a disciplina de POO na UFRN/DIMAp.
+    Este projeto foi desenvolvido por Marcel Setúbal Costa e Olive Oliveira Medeiros (veja author.md) durante a disciplina de LP1 na UFRN/DIMAp.
